@@ -8,6 +8,23 @@
 
 #include "LMU/API.h"
 
+namespace RE
+{
+	// Whether input currently goes to a menu instead of gameplay. Uses the control map's context stack
+	// instead of a raw game function address, which could not be verified for every runtime.
+	inline bool UI__IsInMenuMode()
+	{
+		auto controlMap = ControlMap::GetSingleton();
+		if (!controlMap)
+		{
+			return false;
+		}
+
+		const auto& contextPriorityStack = controlMap->GetRuntimeData().contextPriorityStack;
+		return !contextPriorityStack.empty() && contextPriorityStack.back() != UserEvents::INPUT_CONTEXT_ID::kGameplay;
+	}
+}
+
 namespace DEM
 {
 	struct ExtraMarker
@@ -67,6 +84,9 @@ namespace DEM
 			bool ProcessButton(RE::ButtonEvent* a_event) final;			 // 05
 
 			bool ProcessKeyboardOrMouseButton(RE::ButtonEvent* a_butonEvent);
+			bool IsToggleKey(RE::ButtonEvent* a_buttonEvent, std::string_view a_userEventName) const;
+			bool IsGamepadToggleButton(RE::ButtonEvent* a_buttonEvent) const;
+			bool IsMinimapEvent(RE::InputEvent* a_event) const;
 			bool ProcessGamepadButton(RE::ButtonEvent* a_buttonEvent);
 
 			bool IsControllingMinimap() const { return isControllingMinimap; }
@@ -78,6 +98,7 @@ namespace DEM
 			Minimap* miniMap;
 
 			bool isControllingMinimap = false;
+			bool areFightingControlsDisabled = false;
 
 			RE::MenuControls* menuControls = RE::MenuControls::GetSingleton();
 			RE::ControlMap* controlMap = RE::ControlMap::GetSingleton();
@@ -123,6 +144,11 @@ namespace DEM
 			return displayInfo.GetVisible();
 		}
 
+		bool IsInitialized() const
+		{
+			return localMap != nullptr;
+		}
+
 		bool IsShown() const
 		{
 			return localMap && localMap_->enabled;
@@ -140,6 +166,18 @@ namespace DEM
 		{
 			RE::NiPoint3 translationOffset = cameraContext->cameraRoot->local.rotate * RE::NiPoint3{ a_zOffset, a_yOffset, a_xOffset };
 			cameraContext->defaultState->translation += translationOffset;
+		}
+
+		// Custom gamepad toggle (settings::controls::gamepadToggleKey + gamepadToggleModifier)
+		static bool HasCustomGamepadToggle() { return settings::controls::gamepadToggleKey != 0; }
+
+		// Fed with every gamepad button event from the MenuOpenHandler hook, which receives them before
+		// the minimap input handler. Returns whether the event belongs to an active toggle combo.
+		bool UpdateGamepadToggle(RE::ButtonEvent* a_buttonEvent);
+
+		bool IsGamepadToggle(RE::ButtonEvent* a_buttonEvent) const
+		{
+			return isGamepadToggleActive && a_buttonEvent->GetIDCode() == settings::controls::gamepadToggleKey;
 		}
 
 		void ModZoom(float a_zoomMod)
@@ -192,6 +230,10 @@ namespace DEM
 		float minCamFrustumHalfHeight = 0.0F;
 
 		RE::BSTSmartPointer<InputHandler> inputHandler = RE::make_smart<InputHandler>(this);
+		bool isInputHandlerRegistered = false;
+
+		bool isGamepadToggleModifierHeld = false;
+		bool isGamepadToggleActive = false;
 
 		bool isCameraUpdatePending = true;
 

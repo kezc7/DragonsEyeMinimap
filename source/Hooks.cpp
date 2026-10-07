@@ -9,7 +9,10 @@ void AcceptHUDMenu(RE::HUDMenu* a_hudMenu, RE::FxDelegateHandler::CallbackProces
 	a_gameDelegate->Process("SetLocalMapExtents",
 		[](const RE::FxDelegateArgs& a_delegateArgs) -> void
 		{
-			DEM::Minimap::GetSingleton()->SetLocalMapExtents(a_delegateArgs);
+			if (auto miniMap = DEM::Minimap::GetSingleton(); miniMap && miniMap->IsInitialized())
+			{
+				miniMap->SetLocalMapExtents(a_delegateArgs);
+			}
 		});
 }
 
@@ -17,17 +20,29 @@ void AdvanceMovieHUDMenu(RE::HUDMenu* a_hudMenu, float a_interval, std::uint32_t
 {
 	hooks::HUDMenu::AdvanceMovie(a_hudMenu, a_interval, a_currentTime);
 
-	a_hudMenu->menuFlags.set(RE::UI_MENU_FLAGS::kRendersOffscreenTargets);
-	DEM::Minimap::GetSingleton()->Advance();
+	if (auto miniMap = DEM::Minimap::GetSingleton())
+	{
+		// Only render offscreen while there is something to render, so the HUD behaves like vanilla otherwise
+		static const bool hudRendersOffscreenTargets = a_hudMenu->menuFlags.all(RE::UI_MENU_FLAGS::kRendersOffscreenTargets);
+
+		if (miniMap->IsVisible() && miniMap->IsShown())
+		{
+			a_hudMenu->menuFlags.set(RE::UI_MENU_FLAGS::kRendersOffscreenTargets);
+		}
+		else if (!hudRendersOffscreenTargets)
+		{
+			a_hudMenu->menuFlags.reset(RE::UI_MENU_FLAGS::kRendersOffscreenTargets);
+		}
+
+		miniMap->Advance();
+	}
 }
 
 void PreDisplayHUDMenu(RE::HUDMenu* a_hudMenu)
 {
-	auto miniMap = DEM::Minimap::GetSingleton();
-
-	if (miniMap->IsVisible())
+	if (auto miniMap = DEM::Minimap::GetSingleton(); miniMap && miniMap->IsVisible())
 	{
-		DEM::Minimap::GetSingleton()->PreRender();
+		miniMap->PreRender();
 	}
 
 	hooks::HUDMenu::PreDisplay(a_hudMenu);
@@ -37,12 +52,39 @@ void RefreshPlatformHUDMenu(RE::HUDMenu* a_hudMenu)
 {
 	hooks::HUDMenu::RefreshPlatform(a_hudMenu);
 
-	DEM::Minimap::GetSingleton()->RefreshPlatform();
+	if (auto miniMap = DEM::Minimap::GetSingleton())
+	{
+		miniMap->RefreshPlatform();
+	}
 }
 
 bool CanProcessMenuOpenHandler(RE::MenuOpenHandler* a_menuOpenHandler, RE::InputEvent* a_event)
 {
-	if (a_event->GetDevice() == RE::INPUT_DEVICE::kGamepad)
+	auto miniMap = DEM::Minimap::GetSingleton();
+
+	if (miniMap && DEM::Minimap::HasCustomGamepadToggle())
+	{
+		if (a_event->GetDevice() == RE::INPUT_DEVICE::kGamepad)
+		{
+			if (RE::ButtonEvent* buttonEvent = a_event->AsButtonEvent())
+			{
+				// Track the combo even in menus, so the modifier state is never stale
+				bool isToggle = miniMap->UpdateGamepadToggle(buttonEvent);
+
+				// Keep the combo from also triggering the button's own control (e.g. Back -> Tween Menu)
+				if (isToggle && miniMap->IsInitialized() && !RE::UI__IsInMenuMode())
+				{
+					return false;
+				}
+			}
+		}
+
+		return hooks::MenuOpenHandler::CanProcess(a_menuOpenHandler, a_event);
+	}
+
+	// Only defer the wait button during gameplay. Inside menus the same button is used for other actions
+	// (e.g. switching buy/sell in the barter menu), and rewriting its release into a press broke them.
+	if (a_event->GetDevice() == RE::INPUT_DEVICE::kGamepad && miniMap && miniMap->IsInitialized() && !RE::UI__IsInMenuMode())
 	{
 		if (RE::ButtonEvent* buttonEvent = a_event->AsButtonEvent())
 		{
@@ -57,7 +99,7 @@ bool CanProcessMenuOpenHandler(RE::MenuOpenHandler* a_menuOpenHandler, RE::Input
 				{
 					return false;
 				}
-				else if (buttonEvent->IsUp() && !DEM::Minimap::GetSingleton()->IsShown())
+				else if (buttonEvent->IsUp() && !miniMap->IsShown())
 				{
 					buttonEvent->GetRuntimeData().value = 1.0F;
 					buttonEvent->GetRuntimeData().heldDownSecs = 0.0F;

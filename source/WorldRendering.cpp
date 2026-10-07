@@ -54,10 +54,15 @@ namespace DEM
 		{
 			// Clear last-frame fog of war overlay because I don't know how to update BSTriShapes.
 			// Maybe that would improve performance.
-			std::uint32_t childrenSize = fogOfWarOverlayHolder->GetChildren().size();
-			for (std::uint32_t i = 0; i < childrenSize; i++)
+			// size() is the number of attached children, not the highest used index. Walk the whole
+			// array or children in later slots would never be detached and accumulate every frame.
+			auto& fogOfWarChildren = fogOfWarOverlayHolder->GetChildren();
+			for (std::uint32_t i = 0; i < fogOfWarChildren.capacity(); i++)
 			{
-				fogOfWarOverlayHolder->DetachChildAt(i);
+				if (fogOfWarChildren[i])
+				{
+					fogOfWarOverlayHolder->DetachChildAt(i);
+				}
 			}
 
 			RE::LocalMapMenu::FogOfWar fogOfWar;
@@ -118,11 +123,17 @@ namespace DEM
 
 	void Minimap::RenderOffScreen()
 	{
-		LMU::PixelShaderProperty::Shape prevShaderShape;
-		LMU::PixelShaderProperty::Style shaderStyle;
+		LMU::PixelShaderProperty::Shape prevShaderShape = LMU::PixelShaderProperty::Shape::kSquared;
+		LMU::PixelShaderProperty::Style shaderStyle = LMU::PixelShaderProperty::Style::kColor;
 
-		GetPixelShaderProperties(prevShaderShape, shaderStyle);
-		SetPixelShaderProperties(shape, shaderStyle);
+		// Only available once Local Map Upgrade has sent its hook message
+		bool hasPixelShaderProperties = GetPixelShaderProperties && SetPixelShaderProperties;
+
+		if (hasPixelShaderProperties)
+		{
+			GetPixelShaderProperties(prevShaderShape, shaderStyle);
+			SetPixelShaderProperties(shape, shaderStyle);
+		}
 
 		// 1. Setup culling step ///////////////////////////////////////////////////////////////////////////////////////////
 
@@ -139,12 +150,18 @@ namespace DEM
 		bool isLightUpdateDisabled = mainShadowSceneNode->GetRuntimeData().disableLightUpdate;
 		mainShadowSceneNode->GetRuntimeData().disableLightUpdate = true;
 
-		RE::NiPointer<RE::NiAVObject>& objectLODRoot = mainShadowSceneChildren[3];
-		bool areLODsHidden = objectLODRoot->GetFlags().any(RE::NiAVObject::Flag::kHidden);
-		objectLODRoot->GetFlags().reset(RE::NiAVObject::Flag::kHidden);
+		RE::NiAVObject* objectLODRoot = mainShadowSceneChildren.capacity() > 3 ? mainShadowSceneChildren[3].get() : nullptr;
+		bool areLODsHidden = objectLODRoot && objectLODRoot->GetFlags().any(RE::NiAVObject::Flag::kHidden);
+		if (objectLODRoot)
+		{
+			objectLODRoot->GetFlags().reset(RE::NiAVObject::Flag::kHidden);
+		}
 
+		// Save every global touched below so the main scene render is left exactly as it was
 		bool isByte_1431D1D30 = byte_1431D1D30;
 		bool isNodeFadeEnabled = nodeFadeEnabled;
+		bool isNodeDrawFadeEnabled = nodeDrawFadeEnabled;
+		std::uint32_t prevDword_1431D0D8C = dword_1431D0D8C;
 		byte_1431D1D30 = true;
 		nodeDrawFadeEnabled = nodeFadeEnabled = false;
 		dword_1431D0D8C = 0;
@@ -196,6 +213,8 @@ namespace DEM
 
         cullJobDesc.camera = camera;
 
+		RE::BSTArray<RE::NiPointer<RE::NiAVObject>>* prevCullingObjects = cullJobDesc.cullingObjects;
+
         RE::BSPortalGraphEntry* portalGraphEntry = RE::Main__GetPortalGraphEntry(RE::Main::GetSingleton());
 		
         if (portalGraphEntry)
@@ -208,27 +227,19 @@ namespace DEM
             }
         }
 
-        if (mainShadowSceneChildren.capacity() > 9)
-        {
-			RE::NiPointer<RE::NiAVObject>& portalSharedNode = mainShadowSceneChildren[9];
-			cullJobDesc.scene = portalSharedNode;
-        }
-		else
-		{
-			cullJobDesc.scene = nullptr;
-		}
-		cullJobDesc.Cull(0, 0);
+		// Do not keep pointing to the portal graph objects, they are released when changing cells
+		cullJobDesc.cullingObjects = prevCullingObjects;
 
-        if (mainShadowSceneChildren.capacity() > 8)
-        {
-			RE::NiPointer<RE::NiAVObject>& multiBoundNode = mainShadowSceneChildren[8];
-			cullJobDesc.scene = multiBoundNode;
-        }
-		else
+		// 9: portal-shared node, 8: multibound node
+		for (std::uint32_t sceneIndex : { 9, 8 })
 		{
-			cullJobDesc.scene = nullptr; 
+			if (sceneIndex < mainShadowSceneChildren.capacity() && mainShadowSceneChildren[sceneIndex])
+			{
+				cullJobDesc.scene = mainShadowSceneChildren[sceneIndex];
+				cullJobDesc.Cull(0, 0);
+			}
 		}
-		cullJobDesc.Cull(0, 0);
+		cullJobDesc.scene = nullptr;
 
 		// 3. Rendering step ///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -249,8 +260,12 @@ namespace DEM
 			RE::BSGraphics::BSShaderAccumulator::SetRenderMode(19);
 
 			RE::NiPointer<RE::NiAVObject> fogOfWarOverlayHolder = cullingProcess->GetFogOfWarOverlay();
-			cullJobDesc.scene = fogOfWarOverlayHolder;
-			cullJobDesc.Cull(0, 0);
+			if (fogOfWarOverlayHolder)
+			{
+				cullJobDesc.scene = fogOfWarOverlayHolder;
+				cullJobDesc.Cull(0, 0);
+				cullJobDesc.scene = nullptr;
+			}
 
 			RE::BSGraphics::RendererShadowState* rendererShadowState = RE::BSGraphics::RendererShadowState::GetSingleton();
 
@@ -290,14 +305,18 @@ namespace DEM
 
 		mainShadowSceneNode->GetRuntimeData().disableLightUpdate = isLightUpdateDisabled;
 		byte_1431D1D30 = isByte_1431D1D30;
-		nodeDrawFadeEnabled = nodeFadeEnabled = isNodeFadeEnabled;
-		dword_1431D0D8C = 0;
+		nodeFadeEnabled = isNodeFadeEnabled;
+		nodeDrawFadeEnabled = isNodeDrawFadeEnabled;
+		dword_1431D0D8C = prevDword_1431D0D8C;
 
         shaderAccumulator->ClearActiveRenderPasses(false);
 
 		useMapBrightnessAndContrastBoost = false;
 
-		SetPixelShaderProperties(prevShaderShape, shaderStyle);
+		if (hasPixelShaderProperties)
+		{
+			SetPixelShaderProperties(prevShaderShape, shaderStyle);
+		}
 	}
 
 	// Terrain render passes can be allocated multiple times but only cleared once per frame.

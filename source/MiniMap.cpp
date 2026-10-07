@@ -45,9 +45,10 @@ namespace DEM
 			InitLocalMap();
 		}
 
-		if (localMap && !inputHandler->registered)
+		if (localMap && !isInputHandlerRegistered)
 		{
 			RE::MenuControls::GetSingleton()->AddHandler(inputHandler.get());
+			isInputHandlerRegistered = true;
 		}
 
 		return false;
@@ -176,9 +177,8 @@ namespace DEM
 							title[1] = clearedStr;
 						}
 					}
-					else
+					else if (RE::TESWorldSpace* worldSpace = player->GetWorldspace())
 					{
-						RE::TESWorldSpace* worldSpace = player->GetWorldspace();
 						title[0] = worldSpace->GetFullName();
 					}
 				}
@@ -193,27 +193,34 @@ namespace DEM
 				{
 					RE::GFxValue youAreHereMarker;
 					localMap_->iconDisplay.GetMember("YouAreHereMarker", &youAreHereMarker);
-				
-					float playerToCamAngle = player->GetAngleZ() - playerCameraRotation;
-					float playerToCamAngleDeg = playerToCamAngle * 180 * std::numbers::inv_pi;
-				
-					RE::GFxValue::DisplayInfo youAreHereMarkerDisplayInfo;
-					youAreHereMarker.GetDisplayInfo(&youAreHereMarkerDisplayInfo);
-					youAreHereMarkerDisplayInfo.SetRotation(playerToCamAngleDeg);
-					youAreHereMarker.SetDisplayInfo(youAreHereMarkerDisplayInfo);
+
+					// Undefined until a player marker is created. Release builds would dereference a null interface.
+					if (youAreHereMarker.IsDisplayObject())
+					{
+						float playerToCamAngle = player->GetAngleZ() - playerCameraRotation;
+						float playerToCamAngleDeg = playerToCamAngle * 180 * std::numbers::inv_pi;
+
+						RE::GFxValue::DisplayInfo youAreHereMarkerDisplayInfo;
+						youAreHereMarker.GetDisplayInfo(&youAreHereMarkerDisplayInfo);
+						youAreHereMarkerDisplayInfo.SetRotation(playerToCamAngleDeg);
+						youAreHereMarker.SetDisplayInfo(youAreHereMarkerDisplayInfo);
+					}
 				}
 				else
 				{
 					RE::GFxValue visionCone;
 					localMap_->root.GetMember("VisionCone", &visionCone);
-				
-					float playerCameraToNorthAngle = playerCameraRotation - cellNorthRotation;
-					float playerCameraToNorthAngleDeg = playerCameraToNorthAngle * 180 * std::numbers::inv_pi;
-				
-					RE::GFxValue::DisplayInfo visionConeDisplayInfo;
-					visionCone.GetDisplayInfo(&visionConeDisplayInfo);
-					visionConeDisplayInfo.SetRotation(playerCameraToNorthAngleDeg);
-					visionCone.SetDisplayInfo(visionConeDisplayInfo);
+
+					if (visionCone.IsDisplayObject())
+					{
+						float playerCameraToNorthAngle = playerCameraRotation - cellNorthRotation;
+						float playerCameraToNorthAngleDeg = playerCameraToNorthAngle * 180 * std::numbers::inv_pi;
+
+						RE::GFxValue::DisplayInfo visionConeDisplayInfo;
+						visionCone.GetDisplayInfo(&visionConeDisplayInfo);
+						visionConeDisplayInfo.SetRotation(playerCameraToNorthAngleDeg);
+						visionCone.SetDisplayInfo(visionConeDisplayInfo);
+					}
 				}
 
 			}
@@ -230,6 +237,13 @@ namespace DEM
 			{
 				RE::PlayerCharacter* player = RE::PlayerCharacter::GetSingleton();
 
+				// Nothing to render while the world is being (un)loaded, e.g. when exiting to the main menu
+				RE::LoadedAreaBound* loadedAreaBound = RE::TES::GetSingleton()->GetRuntimeData2().loadedAreaBound;
+				if (!player || !player->parentCell || !player->parentCell->IsAttached() || !loadedAreaBound)
+				{
+					return;
+				}
+
 				RE::NiPoint3 playerPos = player->GetPosition();
 				cameraContext->defaultState->initialPosition.x = playerPos.x;
 				cameraContext->defaultState->initialPosition.y = playerPos.y;
@@ -243,7 +257,6 @@ namespace DEM
 
 				isCameraUpdatePending = false;
 
-				RE::LoadedAreaBound* loadedAreaBound = RE::TES::GetSingleton()->GetRuntimeData2().loadedAreaBound;
 				cameraContext->SetAreaBounds(loadedAreaBound->maxExtent, loadedAreaBound->minExtent);
 
 				if (isFogOfWarEnabled)
@@ -272,7 +285,14 @@ namespace DEM
 			localMap_->root.GetMember("pcControlButtons", &pcControlButtons);
 			pcControlButtons.ClearElements();
 
-			controlMap->GetButtonNameFromUserEvent(userEvents->localMap, RE::INPUT_DEVICE::kKeyboard, controlButton);
+			if (settings::controls::toggleKey)
+			{
+				RE::BSInputDeviceManager::GetSingleton()->GetButtonNameFromID(RE::INPUT_DEVICE::kKeyboard, settings::controls::toggleKey, controlButton);
+			}
+			else
+			{
+				controlMap->GetButtonNameFromUserEvent(userEvents->localMap, RE::INPUT_DEVICE::kKeyboard, controlButton);
+			}
 			pcControlButtons.PushBack(RE::GFxValue{ controlButton.c_str() });
 
 			controlMap->GetButtonNameFromUserEvent(userEvents->look, RE::INPUT_DEVICE::kMouse, moveButton);
@@ -287,8 +307,18 @@ namespace DEM
 			RE::GFxValue gamepadControlButtons;
 			localMap_->root.GetMember("gamepadControlButtons", &gamepadControlButtons);
 			gamepadControlButtons.ClearElements();
-			
-			ControlMap__GetButtonNameFromUserEvent(controlMap, userEvents->wait, RE::INPUT_DEVICE::kGamepad, RE::ControlMap::InputContextID::kGameplay, controlButton);
+
+			// Failed lookups leave the names untouched, do not show keyboard buttons for the gamepad
+			controlButton = moveButton = zoomInButton = zoomOutButton = "";
+
+			if (HasCustomGamepadToggle())
+			{
+				RE::BSInputDeviceManager::GetSingleton()->GetButtonNameFromID(RE::INPUT_DEVICE::kGamepad, settings::controls::gamepadToggleKey, controlButton);
+			}
+			else
+			{
+				ControlMap__GetButtonNameFromUserEvent(controlMap, userEvents->wait, RE::INPUT_DEVICE::kGamepad, RE::ControlMap::InputContextID::kGameplay, controlButton);
+			}
 			gamepadControlButtons.PushBack(RE::GFxValue{ controlButton.c_str() });
 
 			controlMap->GetButtonNameFromUserEvent(userEvents->look, RE::INPUT_DEVICE::kGamepad, moveButton);
