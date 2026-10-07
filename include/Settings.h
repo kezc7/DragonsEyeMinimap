@@ -31,6 +31,9 @@ namespace settings
 
 	namespace controls
 	{
+		inline std::uint32_t toggleKey = 0;	 // DirectInput scan code; 0 = use the game's "Local Map" control
+		inline std::uint32_t gamepadToggleKey = 0;		  // Gamepad button code; 0 = use the game's "Wait" control
+		inline std::uint32_t gamepadToggleModifier = 0;	  // Gamepad button to hold with gamepadToggleKey; 0 = none
 		inline bool followPlayerCameraRotation = true;
 		inline float holdDownToControlSecs = 0.15F;
 		inline float delayToHideControlsSecs = 1.0F;

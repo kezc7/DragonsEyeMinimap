@@ -33,6 +33,9 @@ namespace settings
 		{
 			using namespace controls;
 			iniSettingCollection->AddSettings(
+				MakeSetting("uToggleKey:Controls", toggleKey),
+				MakeSetting("uGamepadToggleKey:Controls", gamepadToggleKey),
+				MakeSetting("uGamepadToggleModifier:Controls", gamepadToggleModifier),
 				MakeSetting("bFollowPlayerCameraRotation:Controls", followPlayerCameraRotation),
 				MakeSetting("fHoldDownToControlSecs:Controls", holdDownToControlSecs),
 				MakeSetting("fDelayToHideControlsSecs:Controls", delayToHideControlsSecs)
@@ -46,7 +49,8 @@ namespace settings
 
 		{
 			using namespace debug;
-			logLevel = static_cast<logger::level>(iniSettingCollection->GetSetting<std::uint32_t>("uLogLevel:Debug"));
+			std::uint32_t iniLogLevel = iniSettingCollection->GetSetting<std::uint32_t>("uLogLevel:Debug");
+			logLevel = static_cast<logger::level>(std::min<std::uint32_t>(iniLogLevel, logger::level::off));
 		}
 
 		{
@@ -63,6 +67,9 @@ namespace settings
 
 		{
 			using namespace controls;
+			toggleKey = iniSettingCollection->GetSetting<std::uint32_t>("uToggleKey:Controls");
+			gamepadToggleKey = iniSettingCollection->GetSetting<std::uint32_t>("uGamepadToggleKey:Controls");
+			gamepadToggleModifier = iniSettingCollection->GetSetting<std::uint32_t>("uGamepadToggleModifier:Controls");
 			followPlayerCameraRotation = iniSettingCollection->GetSetting<bool>("bFollowPlayerCameraRotation:Controls");
 			holdDownToControlSecs = iniSettingCollection->GetSetting<float>("fHoldDownToControlSecs:Controls");
 			delayToHideControlsSecs = iniSettingCollection->GetSetting<float>("fDelayToHideControlsSecs:Controls");

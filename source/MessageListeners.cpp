@@ -14,6 +14,7 @@ void LocalMapUpgradeMessageListener(SKSE::MessagingInterface::Message* a_msg);
 
 void SKSEMessageListener(SKSE::MessagingInterface::Message* a_msg)
 {
+
 	// If all plugins have been loaded
 	if (a_msg->type == SKSE::MessagingInterface::kPostLoad) 
 	{
@@ -38,7 +39,7 @@ void SKSEMessageListener(SKSE::MessagingInterface::Message* a_msg)
 		if (SKSE::GetMessagingInterface()->RegisterListener("LocalMapUpgrade", LocalMapUpgradeMessageListener)) 
 		{
 			auto lmuInfo = skse->GetPluginInfo("LocalMapUpgrade");
-			if (lmuInfo->version >= 0x03010000)
+			if (!lmuInfo || lmuInfo->version >= 0x03010000)
 			{
 				logger::info("Successfully registered for Local Map Upgrade messages!");
 			}
